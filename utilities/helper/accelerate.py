@@ -139,7 +139,7 @@ try:
 except ImportError:
     pass
 
-def get_pid_location(module):
+def get_pid_location(module, port):
     """
     Try to find a pid directory in the common locations, falling 
     back to the user's home directory if no others exist
@@ -147,12 +147,12 @@ def get_pid_location(module):
     for dir in ['/var/run', '/var/lib/run', '/run', os.path.expanduser("~/")]:
         try:
             if os.path.isdir(dir) and os.access(dir, os.R_OK|os.W_OK):
-                return os.path.join(dir, '.accelerate.pid')
+                return os.path.join(dir, '.accelerate-%s.pid' % port)
         except:
             pass
     module.fail_json(msg="couldn't find any valid directory to use for the accelerate pid file")
 
-def get_socket_location(module):
+def get_socket_location(module, port):
     """
     Try to find a socket directory in the common locations, falling
     back to the user's home directory if no others exist
@@ -160,7 +160,7 @@ def get_socket_location(module):
     for dir in ['/var/run', '/var/lib/run', '/run', os.path.expanduser("~/")]:
         try:
             if os.path.isdir(dir) and os.access(dir, os.R_OK|os.W_OK):
-                return os.path.join(dir, '.ansible-accelerate', ".local.socket")
+                return os.path.join(dir, '.ansible-accelerate-%s' % port, ".local.socket")
         except:
             pass
     module.fail_json(msg="couldn't find any valid directory to use for the accelerate socket file")
@@ -684,8 +684,8 @@ def main():
         module.fail_json(msg="keyczar is not installed (on the remote side)")
 
     DEBUG_LEVEL=debug
-    pid_file = get_pid_location(module)
-    socket_file = get_socket_location(module)
+    pid_file = get_pid_location(module, port)
+    socket_file = get_socket_location(module, port)
 
     daemon_pid = None
     daemon_running = False
