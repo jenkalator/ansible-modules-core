@@ -320,9 +320,12 @@ class ThreadedTCPServer(SocketServer.ThreadingTCPServer):
         SocketServer.ThreadingTCPServer.__init__(self, server_address, RequestHandlerClass)
 
     def shutdown(self):
+        vvvv("ThreadedTCPServer shutting down, terminating thread")
         self.local_thread.terminate()
         self.running = False
+        vvvv("ThreadedTCPServer shutting down ThreadingTCPServer")
         SocketServer.ThreadingTCPServer.shutdown(self)
+        vvvv("ThreadedTCPServer done shutting down")
 
 class ThreadedTCPRequestHandler(SocketServer.BaseRequestHandler):
     # the key to use for this connection
