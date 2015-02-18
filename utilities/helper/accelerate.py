@@ -139,8 +139,6 @@ try:
 except ImportError:
     pass
 
-SOCKET_FILE = os.path.join(get_module_path(), '.ansible-accelerate', ".local.socket")
-
 def get_pid_location(module):
     """
     Try to find a pid directory in the common locations, falling 
@@ -153,6 +151,19 @@ def get_pid_location(module):
         except:
             pass
     module.fail_json(msg="couldn't find any valid directory to use for the accelerate pid file")
+
+def get_socket_location(module):
+    """
+    Try to find a socket directory in the common locations, falling
+    back to the user's home directory if no others exist
+    """
+    for dir in ['/var/run', '/var/lib/run', '/run', os.path.expanduser("~/")]:
+        try:
+            if os.path.isdir(dir) and os.access(dir, os.R_OK|os.W_OK):
+                return os.path.join(dir, '.ansible-accelerate', ".local.socket")
+        except:
+            pass
+    module.fail_json(msg="couldn't find any valid directory to use for the accelerate socket file")
 
 
 # NOTE: this shares a fair amount of code in common with async_wrapper, if async_wrapper were a new module we could move
@@ -199,16 +210,17 @@ class LocalSocketThread(Thread):
     server = None
     terminated = False
 
-    def __init__(self, group=None, target=None, name=None, args=(), kwargs={}, Verbose=None):
+    def __init__(self, socket_file, group=None, target=None, name=None, args=(), kwargs={}, Verbose=None):
         self.server = kwargs.get('server')
+        self.socket_file = socket_file
         Thread.__init__(self, group, target, name, args, kwargs, Verbose)
 
     def run(self):
         try:
-            if os.path.exists(SOCKET_FILE):
-                os.remove(SOCKET_FILE)
+            if os.path.exists(self.socket_file):
+                os.remove(self.socket_file)
             else:
-                dir = os.path.dirname(SOCKET_FILE)
+                dir = os.path.dirname(self.socket_file)
                 if os.path.exists(dir):
                     if not os.path.isdir(dir):
                         log("The socket file path (%s) exists, but is not a directory. No local connections will be available" % dir)
@@ -223,7 +235,7 @@ class LocalSocketThread(Thread):
         except OSError:
             pass
         self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.s.bind(SOCKET_FILE)
+        self.s.bind(self.socket_file)
         self.s.listen(5)
         while not self.terminated:
             try:
@@ -291,7 +303,7 @@ class ThreadedTCPServer(SocketServer.ThreadingTCPServer):
     key_list = []
     last_event = datetime.now()
     last_event_lock = Lock()
-    def __init__(self, server_address, RequestHandlerClass, module, password, timeout, use_ipv6=False):
+    def __init__(self, server_address, RequestHandlerClass, module, password, timeout, socket_file, use_ipv6=False):
         self.module = module
         self.key_list.append(AesKey.Read(password))
         self.allow_reuse_address = True
@@ -302,7 +314,7 @@ class ThreadedTCPServer(SocketServer.ThreadingTCPServer):
 
         if self.module.params.get('multi_key', False):
             vv("starting thread to handle local connections for multiple keys")
-            self.local_thread = LocalSocketThread(kwargs=dict(server=self))
+            self.local_thread = LocalSocketThread(socket_file, kwargs=dict(server=self))
             self.local_thread.start()
 
         SocketServer.ThreadingTCPServer.__init__(self, server_address, RequestHandlerClass)
@@ -580,7 +592,7 @@ class ThreadedTCPRequestHandler(SocketServer.BaseRequestHandler):
             self.server.module.atomic_move(out_path, final_path)
         return dict()
 
-def daemonize(module, password, port, timeout, minutes, use_ipv6, pid_file):
+def daemonize(module, password, port, timeout, minutes, use_ipv6, pid_file, socket_file):
     try:
         daemonize_self(module, password, port, minutes, pid_file)
 
@@ -614,7 +626,7 @@ def daemonize(module, password, port, timeout, minutes, use_ipv6, pid_file):
                     address = ("::", port)
                 else:
                     address = ("0.0.0.0", port)
-                server = ThreadedTCPServer(address, ThreadedTCPRequestHandler, module, password, timeout, use_ipv6=use_ipv6)
+                server = ThreadedTCPServer(address, ThreadedTCPRequestHandler, module, password, timeout, socket_file, use_ipv6=use_ipv6)
                 server.allow_reuse_address = True
                 break
             except Exception, e:
@@ -673,6 +685,7 @@ def main():
 
     DEBUG_LEVEL=debug
     pid_file = get_pid_location(module)
+    socket_file = get_socket_location(module)
 
     daemon_pid = None
     daemon_running = False
@@ -702,7 +715,7 @@ def main():
         # try to connect to the file socket for the daemon if it exists
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            s.connect(SOCKET_FILE)
+            s.connect(socket_file)
             s.sendall(password + '\n')
             data = ""
             while '\n' not in data:
@@ -722,6 +735,6 @@ def main():
             module.fail_json(msg="could not transfer new key: %s" % data.strip())
     else:
         # try to start up the daemon
-        daemonize(module, password, port, timeout, minutes, ipv6, pid_file)
+        daemonize(module, password, port, timeout, minutes, ipv6, pid_file, socket_file)
 
 main()
